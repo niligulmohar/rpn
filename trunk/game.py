@@ -9,6 +9,7 @@
 
 import pygame as py
 from itertools import chain
+import random
 
 ######################################################################
 
@@ -82,6 +83,83 @@ reverse_keymap = {}
 for key in (k for k in dir(py) if k[0:2] == 'K_'):
     code = getattr(py, key)
     reverse_keymap[code] = 'pygame.' + key
+
+######################################################################
+
+SOUND = True
+END_MUSIC_EVENT = py.USEREVENT
+
+class Music(object):
+    class Song(object):
+        def __init__(self, name, bpm, bpb, intro_delay_bars = 0, intro_delay_s = 0):
+            self.name = name
+            self.bpm = bpm
+            self.bpb = bpb
+            self.intro_delay_bars = intro_delay_bars
+            self.intro_delay_ticks = intro_delay_s * 1000
+        def play(self):
+            py.mixer.music.stop()
+            py.mixer.music.load(self.name)
+            py.mixer.music.play(0)
+            py.mixer.music.set_endevent(END_MUSIC_EVENT)
+        def bars(self, ticks):
+            return (ticks - self.intro_delay_ticks - EXPECTED_MUSIC_DELAY) / 60000.0 * self.bpm / self.bpb - self.intro_delay_bars
+        def beats(self, ticks):
+            return (ticks - self.intro_delay_ticks - EXPECTED_MUSIC_DELAY) / 60000.0 * self.bpm - (self.intro_delay_bars * self.bpb)
+
+    songs = {}
+
+    def __init__(self):
+        self.volume = 1.0
+        self.current_song = None
+        self.playlist = self.songs.values()
+        self.stopped = True
+        random.shuffle(self.playlist)
+    def next(self):
+        if not self.stopped:
+            self.play()
+    def play(self, song = None):
+        if not song:
+            #song = random.choice(self.songs.values())
+            song = self.playlist[0]
+        else:
+            song = self.songs[song]
+        self.playlist.remove(song)
+        self.playlist.append(song)
+        self.current_song = song
+        self.song_start_ticks = py.time.get_ticks()
+        self.stopped = False
+        py.mixer.music.set_volume(self.volume)
+        if SOUND:
+            song.play()
+
+    def stop(self):
+        self.current_song = None
+        self.stopped = True
+        if SOUND:
+            py.mixer.music.fadeout(7000)
+    def pause(self):
+        self.pause_ticks = py.time.get_ticks()
+        if SOUND:
+            py.mixer.music.pause()
+    def unpause(self):
+        now = py.time.get_ticks()
+        self.song_start_ticks += now - self.pause_ticks
+        if SOUND:
+            py.mixer.music.unpause()
+    def bars(self):
+        if self.current_song:
+            now = py.time.get_ticks()
+            return self.current_song.bars(now - self.song_start_ticks)
+        else:
+            return 0
+    def beats(self):
+        if self.current_song:
+            now = py.time.get_ticks()
+            return self.current_song.beats(now - self.song_start_ticks)
+        else:
+            return 0
+    
 
 ######################################################################
 
