@@ -25,9 +25,33 @@ def index_directory(none, directory, filenames):
 os.path.walk('data', index_directory, None)
 
 class Texture(object):
-    def __init__(self, filename = None, outline_of = None):
+    @classmethod
+    def class_init(cls):
+        def make_font(name, size):
+            return pygame.font.Font(files[name + '.TTF'], size)
+        cls.font = make_font('TEACPSSB', 8)
+        cls.texts = {}
+    @classmethod
+    # TODO: Låta bli att läcka text_surface:s
+    def text(cls, text):
+        if cls.texts.has_key(text):
+            return cls.texts[text]
+        small_surface = font.render(text, False, (255,255,255))
+        texture_surface = game.py.Surface((2 ** math.ceil(math.log(small_surface.get_width()) / math.log(2)),
+                                           2 ** math.ceil(math.log(small_surface.get_height()) / math.log(2))),
+                                          game.py.SRCALPHA)
+        texture_surface.blit(small_surface)
+        texture = Texture(surface = texture_surface)
+        texture.width = small_surface.get_width()
+        texture.height = small_surface.get_height()
+        cls.texts[text] = texture
+        return texture
+        
+    def __init__(self, filename = None, outline_of = None, surface = None):
         self.surface = None
-        if filename:
+        if surface:
+            self.surface = surface
+        elif filename:
             self.surface = game.py.image.load(files[filename]).convert_alpha()
         elif outline_of:
             self.surface = outline_of.surface.copy()
@@ -53,21 +77,95 @@ class Texture(object):
 class Model(object):
     def __init__(self):
         self.frames = 0
-        self.robots = [Robot()]
+        self.grid = Grid()
+        self.robots = [Robot(self.grid)]
+        self.draw("""
+  # #
+#############
+#0123456789 #
+#           #
+#   #   *   #
+#   #5    1 #
+# #####     #
+#  7#   # # #
+#   #    4  #
+# 2     # # #
+#           #
+#############
+        # #""")
     def before_frame(self):
         self.frames += 1
         self.robots[0].act_on_inputs(self.move_up, self.move_down, self.move_left, self.move_right, self.action)
+    def draw(self, string):
+        lines = string.split("\n")
+        y0 = -len(lines) / 2
+        x0 = -max((len(s) for s in lines)) / 2 + 1
+        for yd, l in enumerate(lines):
+            for xd, c in enumerate(l):
+                x = x0+xd
+                y = y0+yd
+                self.grid.set(x, y, Cell(c == '#'))
+                if c == '*':
+                    self.robots[0].x = x
+                    self.robots[0].y = y
+                elif c in "0123456789":
+                    self.grid.get(x, y).object = Number(self.grid, ord(c) - ord("0"))
+                    
+class Cell(object):
+    def __init__(self, blocked = False):
+        self.blocked = blocked
+        self.object = None
+
+class Grid(object):
+    def __init__(self):
+        self.rows = {}
+        self.default_cell = Cell()
+
+    def get(self, x, y):
+        if self.rows.has_key(y):
+            if self.rows[y].has_key(x):
+                return self.rows[y][x]
+        return self.default_cell
+    def set(self, x, y, cell):
+        if not self.rows.has_key(y):
+            self.rows[y] = {}
+        self.rows[y][x] = cell
 
 class Entity(object):
-    VELOCITY = 2.5
+    VELOCITY = 2.8 / 32
+    CORNERING_VELOCITY = VELOCITY * 0.8
     SQRT2 = 1 / math.sqrt(2)
-    def __init__(self):
+    def __init__(self, grid):
         self.x = 0
         self.y = 0
+        self.grid = grid
+    def occupied_grid_rows(self):
+        fraction = self.y
+        primary = round(fraction)
+        difference = fraction - primary
+        if difference == 0:
+            return (primary, primary, 0)
+        elif difference > 0:
+            return (primary, primary + 1, difference)
+        else:
+            return (primary, primary - 1, difference)
+    def occupied_grid_cols(self):
+        fraction = self.x
+        primary = round(fraction)
+        difference = fraction - primary
+        if difference == 0:
+            return (primary, primary, 0)
+        elif difference > 0:
+            return (primary, primary + 1, difference)
+        else:
+            return (primary, primary - 1, difference)
+
+def clamp(min_val, x, max_val):
+    return max(min_val, min(x, max_val))
 
 class Robot(Entity):
-    def __init__(self):
-        Entity.__init__(self)
+    def __init__(self, grid):
+        Entity.__init__(self, grid)
     def act_on_inputs(self, up, down, left, right, action):
         if up() and not down():
             self.dy = -1
@@ -89,19 +187,62 @@ class Robot(Entity):
         self.x += self.dx
         self.y += self.dy
 
+        # TODO: Skriv om på ett snyggt och begripligt sätt:
+        # TODO: Se även till så att den gör rätt i samtliga fall där man försöker gå diagonalt.
+        self.rows = self.occupied_grid_rows()
+        self.cols = self.occupied_grid_cols()
+
+        def check_x():
+            if self.dx:
+                if self.grid.get(self.cols[1],self.rows[0]).blocked or self.grid.get(self.cols[1],self.rows[1]).blocked:
+                    self.x = self.cols[0]
+                    if self.dy == 0:
+                        if not self.grid.get(self.cols[1],self.rows[0]).blocked:
+                            self.y -= clamp(-Robot.CORNERING_VELOCITY, self.rows[2], Robot.CORNERING_VELOCITY)
+                        elif not self.grid.get(self.cols[1],self.rows[1]).blocked:
+                            self.y += clamp(-Robot.CORNERING_VELOCITY, self.rows[2], Robot.CORNERING_VELOCITY)
+                    else:
+                        self.cols = (self.cols[0], self.cols[0], 0)
+                        
+        def check_y():
+            if self.dy:
+                if self.grid.get(self.cols[0],self.rows[1]).blocked or self.grid.get(self.cols[1],self.rows[1]).blocked:
+                    self.y = self.rows[0]
+                    if self.dx == 0:
+                        if not self.grid.get(self.cols[0],self.rows[1]).blocked:
+                            self.x -= clamp(-Robot.CORNERING_VELOCITY, self.cols[2], Robot.CORNERING_VELOCITY)
+                        elif not self.grid.get(self.cols[1],self.rows[1]).blocked:
+                            self.x += clamp(-Robot.CORNERING_VELOCITY, self.cols[2], Robot.CORNERING_VELOCITY)
+                    else:
+                        self.rows = (self.rows[0], self.rows[0], 0)
+        if abs(self.rows[2]) < abs(self.cols[2]):
+            check_y()
+            check_x()
+        else:
+            check_x()
+            check_y()
+
+class Number(Entity):
+    def __init__(self, grid, numerator, denominator = 1):
+        Entity.__init__(self, grid)
+        self.numerator = numerator
+        self.denominator = denominator
+
+
 ######################################################################
 
 class BodyPart(object):
     @classmethod
     def class_init(cls):
         cls.sprites = {}
-        for n in ['torso1', 'arm1', 'leg_l1', 'leg_r1', 'head1', 'eye1', 'pupil1']:
+        for n in ['torso1', 'arm1', 'leg_l1', 'leg_r1', 'head1', 'eye1', 'pupil1', 'shadow']:
             cls.sprites[n] = Texture(filename = n + '.png')
             cls.sprites[n].outline = Texture(outline_of = cls.sprites[n])
 
-    def __init__(self, texture, color, parent = None):
+    def __init__(self, texture, color, parent = None, outline = True):
         self.animation_speed_factor = 1.0/13
         self.visible = True
+        self.outline = outline
         self.size = 16
         self.texture = texture
         self.outline_texture = texture.outline
@@ -121,7 +262,7 @@ class BodyPart(object):
         self.draw_layer(0)
         self.draw_layer(1)
     def draw_layer(self, layer):
-        if self.visible:
+        if self.visible and ((layer == 0 and self.outline) or layer == 1):
             glMatrixMode(GL_MODELVIEW)
             glPushMatrix()
             self.current_pos[0] += (self.pos[0] - self.current_pos[0]) * self.animation_speed_factor
@@ -166,15 +307,17 @@ class RobotSprite(object):
         self.new_blink_delay()
 
         self.body = BodyPart(BodyPart.sprites['torso1'], color)
+        self.shadow = BodyPart(BodyPart.sprites['shadow'], [0,0,0,1], self.body, False)
+        self.shadow.pos0[1] = 2
         self.head = BodyPart(BodyPart.sprites['head1'], color, self.body)
         self.head.pos0[1] = -4
-        self.eye_l = BodyPart(BodyPart.sprites['eye1'], [1,1,1,1], self.head)
+        self.eye_l = BodyPart(BodyPart.sprites['eye1'], [1,1,1,1], self.head, False)
         self.eye_l.pos0 = [-4, -7]
-        self.pupil_l = BodyPart(BodyPart.sprites['pupil1'], [0,0,0,1], self.eye_l)
+        self.pupil_l = BodyPart(BodyPart.sprites['pupil1'], [0,0,0,1], self.eye_l, False)
         self.pupil_l.animation_speed_factor = 0.5
-        self.eye_r = BodyPart(BodyPart.sprites['eye1'], [1,1,1,1], self.head)
+        self.eye_r = BodyPart(BodyPart.sprites['eye1'], [1,1,1,1], self.head, False)
         self.eye_r.pos0 = [4, -7]
-        self.pupil_r = BodyPart(BodyPart.sprites['pupil1'], [0,0,0,1], self.eye_r)
+        self.pupil_r = BodyPart(BodyPart.sprites['pupil1'], [0,0,0,1], self.eye_r, False)
         self.pupil_r.animation_speed_factor = 0.5
         self.arm_r = BodyPart(BodyPart.sprites['arm1'], color, self.body)
         self.arm_r.pos0 = [6, -1]
@@ -197,8 +340,8 @@ class RobotSprite(object):
     def new_blink_delay(self):
         self.blink_delay += int(random.random() * 10) + 60
     def draw(self, frame):
-        self.body.pos0[0] = self.entity.x
-        self.body.pos0[1] = self.entity.y
+        self.body.pos0[0] = self.entity.x * Map.TILE_SIZE
+        self.body.pos0[1] = self.entity.y * Map.TILE_SIZE
         if self.entity.dx or self.entity.dy:
             if not self.moving:
                 self.moving = True
@@ -210,20 +353,21 @@ class RobotSprite(object):
             self.move_up_down_phase = 0
             self.moving = False
             self.dance = False
-            self.new_gesture_delay()
+            if self.gesture_delay < frame:
+                self.new_gesture_delay()
                 
         sideways_l = sideways_r = height_l = height_r = 0
         if self.moving:
             arm_angle = -40
             torso_height = 0
             self.dance = False
-            height_l = [0,1,2,3,2,1,0,-1,-2,-3,-2,-1][self.move_up_down_phase % 12] * Robot.VELOCITY
+            height_l = [0,1,2,3,2,1,0,-1,-2,-3,-2,-1][self.move_up_down_phase % 12] * Robot.VELOCITY * Map.TILE_SIZE
             height_r = - height_l
             if not self.entity.dy:
                 height_l = min(height_l, 2)
                 height_r = min(height_r, 2)
-                sideways_l = [0,1,2,3,2,1,0,-1,-2,-3,-2,-1][(self.move_up_down_phase + 3) % 12] * Robot.VELOCITY * self.move_left_right_sign
-                sideways_r = [0,1,2,3,2,1,0,-1,-2,-3,-2,-1][(self.move_up_down_phase + 9) % 12] * Robot.VELOCITY * self.move_left_right_sign
+                sideways_l = [0,1,2,3,2,1,0,-1,-2,-3,-2,-1][(self.move_up_down_phase + 3) % 12] * Robot.VELOCITY * Map.TILE_SIZE * self.move_left_right_sign
+                sideways_r = [0,1,2,3,2,1,0,-1,-2,-3,-2,-1][(self.move_up_down_phase + 9) % 12] * Robot.VELOCITY * Map.TILE_SIZE * self.move_left_right_sign
         elif self.dance:
             arm_angle = math.sin(frame * 0.1) * 30
             torso_height = math.cos(frame * 0.2) * 1
@@ -236,6 +380,7 @@ class RobotSprite(object):
         self.leg_r.pos[0] = sideways_r
         self.leg_l.pos[1] = -torso_height + height_l
         self.leg_r.pos[1] = -torso_height + height_r
+        self.shadow.pos[1] = -torso_height
         if self.moving:
             self.pupil_l.pos = self.pupil_r.pos = [self.entity.dx * self.PUPIL_FACTOR,
                                                    self.entity.dy * self.PUPIL_FACTOR]
@@ -255,23 +400,110 @@ class RobotSprite(object):
         if self.entity.dy < 0:
             self.eye_r.visible = False
             self.eye_l.visible = False
-        elif frame >= self.blink_delay:
-            self.new_blink_delay()
-            self.eye_r.visible = True
-            self.eye_l.visible = True
-        elif frame >= self.blink_delay - 3:
-            self.eye_r.visible = False
-            self.eye_l.visible = False
+            self.head.pos[1] = 2
         else:
-            self.eye_r.visible = True
-            self.eye_l.visible = True
+            self.head.pos[1] = 0
+            if frame >= self.blink_delay:
+                self.new_blink_delay()
+                self.eye_r.visible = True
+                self.eye_l.visible = True
+            elif frame >= self.blink_delay - 3:
+                self.eye_r.visible = False
+                self.eye_l.visible = False
+            else:
+                self.eye_r.visible = True
+                self.eye_l.visible = True
         self.body.draw()
+
+
+class NumberSprite(object):
+    @classmethod
+    def class_init(cls):
+        cls.sprites = {}
+        for n in ['number_base']:
+            cls.sprites[n] = Texture(filename = n + '.png')
+    @classmethod
+    def color(cls, number):
+        return [(0.3, 0.3, 0.3),
+                (0.5, 0.3, 0.0),
+                (0.8, 0.0, 0.0),
+                (1.0, 0.5, 0.0),
+                (1.0, 1.0, 0.0),
+                (0.0, 0.8, 0.0),
+                (0.0, 0.0, 0.9),
+                (1.0, 0.0, 1.0),
+                (0.5, 0.5, 0.5),
+                (1.0, 1.0, 1.0)][number.numerator % 10]
+    
+class Map(object):
+    TILE_SIZE = 32
+    @classmethod
+    def class_init(cls):
+        cls.tiles = {}
+        for n in ['grass0', 'rock']:
+            cls.tiles[n] = Texture(filename = n + '.png')
+            cls.tiles[n].cells_wide = float(cls.tiles[n].surface.get_width() / cls.TILE_SIZE)
+            cls.tiles[n].cells_high = float(cls.tiles[n].surface.get_height() / cls.TILE_SIZE)
+    def __init__(self, grid):
+        self.grid = grid
+    def draw(self, x0, y0, x1, y1, frame):
+        for y in xrange(y0, y1):
+            for x in xrange(x0, x1):
+                c = self.grid.get(x, y)
+                if c.blocked:
+                    t = self.tiles['rock']
+                else:
+                    t = self.tiles['grass0']
+                t.bind()
+                glBegin(GL_QUADS)
+                def luminance(x,y):
+                    return (math.sin((x + frame*0.08)*0.4) * math.sin((y + frame*0.01)*0.4)) * 0.2 + 0.9
+                u0 = x % t.cells_wide
+                u1 = u0 + 1
+                v0 = y % t.cells_high
+                v1 = v0 + 1
+                glTexCoord2f(u0 / t.cells_wide, v0 / t.cells_wide)
+                glColor3f(*([luminance(x,y)]*3))
+                glVertex2f(self.TILE_SIZE * (x - 0.5), self.TILE_SIZE * (y - 0.5))
+                glTexCoord2f(u1 / t.cells_wide, v0 / t.cells_wide)
+                glColor3f(*([luminance(x+1,y)]*3))
+                glVertex2f(self.TILE_SIZE * (x + 0.5), self.TILE_SIZE * (y - 0.5))
+                glTexCoord2f(u1 / t.cells_wide, v1 / t.cells_wide)
+                glColor3f(*([luminance(x+1,y+1)]*3))
+                glVertex2f(self.TILE_SIZE * (x + 0.5), self.TILE_SIZE * (y + 0.5))
+                glTexCoord2f(u0 / t.cells_wide, v1 / t.cells_wide)
+                glColor3f(*([luminance(x,y+1)]*3))
+                glVertex2f(self.TILE_SIZE * (x - 0.5), self.TILE_SIZE * (y + 0.5))
+                glEnd()
+                if c.object:
+                    NumberSprite.sprites['number_base'].bind()
+                    glPushMatrix()
+                    glBegin(GL_QUADS)
+                    glColor3f(*NumberSprite.color(c.object))
+                    glTexCoord2f(0, 0)
+                    glVertex2f(self.TILE_SIZE * (x - 0.5), self.TILE_SIZE * (y - 0.5))
+                    glTexCoord2f(1, 0)
+                    glVertex2f(self.TILE_SIZE * (x + 0.5), self.TILE_SIZE * (y - 0.5))
+                    glTexCoord2f(1, 1)
+                    glVertex2f(self.TILE_SIZE * (x + 0.5), self.TILE_SIZE * (y + 0.5))
+                    glTexCoord2f(0, 1)
+                    glVertex2f(self.TILE_SIZE * (x - 0.5), self.TILE_SIZE * (y + 0.5))
+                    glEnd()
+                    glPopMatrix()
+                    
 
 class RpnView(game.View):
     CLEAR_COLOR = [0.28, 0.24, 0.55, 0.0]
     def init(self, model):
         self.model = model
         self.robot = RobotSprite(model.robots[0], [0.6,0.2,0.2,1])
+        self.map = Map(model.grid)
+        self.center = [0,0]
+        self.zoom = 2
+        self.current_zoom = random.uniform(0.25, 8)
+        self.current_center = [random.uniform(-15, 15), random.uniform(-15, 15)]
+        self.fade_to_black = 0
+        self.current_fade_to_black = 1
 
     def update(self):
         glMatrixMode(GL_PROJECTION)
@@ -281,17 +513,39 @@ class RpnView(game.View):
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
 
-        glClearColor(*self.CLEAR_COLOR)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
         glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
         glEnable(GL_TEXTURE_2D)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
+        self.current_zoom += (self.zoom - self.current_zoom) * 0.05
+        self.current_center[0] += (self.center[0] - self.current_center[0]) * 0.05
+        self.current_center[1] += (self.center[1] - self.current_center[1]) * 0.05
+        glPushMatrix()
+        glScalef(*([self.current_zoom]*3))
+        glTranslatef(-self.current_center[0] * Map.TILE_SIZE, -self.current_center[1] * Map.TILE_SIZE, 0)
 
-        glScalef(*([2]*3))
+        glClearColor(*self.CLEAR_COLOR)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+        x0 = int(-WIDTH / 2 / Map.TILE_SIZE / self.current_zoom + self.current_center[0]) - 1
+        x1 = int(WIDTH / 2 / Map.TILE_SIZE / self.current_zoom + self.current_center[0]) + 2
+        y0 = int(-HEIGHT / 2 / Map.TILE_SIZE / self.current_zoom + self.current_center[1]) - 1
+        y1 = int(HEIGHT / 2 / Map.TILE_SIZE / self.current_zoom + self.current_center[1]) + 2
+        self.map.draw(x0,y0,x1,y1, self.model.frames)
         self.robot.draw(self.model.frames)
+
+        glPopMatrix()
+        self.current_fade_to_black += (self.fade_to_black - self.current_fade_to_black) * 0.02
+        if self.current_fade_to_black > 0.01:
+            glDisable(GL_TEXTURE_2D)
+            glBegin(GL_QUADS)
+            glColor4f(0,0,0,self.current_fade_to_black)
+            glVertex2f(-WIDTH/2, -HEIGHT/2)
+            glVertex2f(WIDTH/2, -HEIGHT/2)
+            glVertex2f(WIDTH/2, HEIGHT/2)
+            glVertex2f(-WIDTH/2, HEIGHT/2)
+            glEnd()
         game.py.display.flip()
 
 
@@ -338,9 +592,11 @@ flags = game.py.DOUBLEBUF | game.py.OPENGL
 if max(game.py.display.list_modes()) <= (WIDTH, HEIGHT):
     flags |= game.py.FULLSCREEN | game.py.HWSURFACE
 screen = game.py.display.set_mode((WIDTH, HEIGHT), flags)
-game.py.mouse.set_visible(True)
+game.py.mouse.set_visible(False)
 
 BodyPart.class_init()
+Map.class_init()
+NumberSprite.class_init()
 
 model = Model()
 view = RpnView(screen, model)
