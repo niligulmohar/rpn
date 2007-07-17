@@ -82,19 +82,19 @@ class Model(object):
         self.grid = Grid()
         self.robots = [Robot(self.grid)]
         self.draw_map("""
-  # #
-#############
-#+-*/       #
-#    ?      #
-#   #   S   #
-#  !#5    1 #
-# #####     #
-#  7#?  # # #
-#   #    4  #
-# 2     # # #
-#   ! ?     #
-#############
-        # #""")
+  ###
+### #########
+#           #
+# +         #
+#       S   #
+# ? ?       #
+#           #
+# + ? - ? + #
+#           #
+# ? ? + ? ? #
+#           #
+######### ###
+        ###""")
     def before_frame(self):
         self.frames += 1
         self.robots[0].act_on_inputs(self.move_up, self.move_down, self.move_left, self.move_right, self.action)
@@ -284,17 +284,18 @@ class Operator(Entity):
         return len(self.operator_type)
     def pushed_on(self, stack):
         if len(stack) >= 3:
-            stack.pop()
-            operand0 = stack.pop()
-            operand1 = stack.pop()
-            if self.operator_type == '+':
-                stack.append(Number(self.grid, operand1.numerator + operand0.numerator))
-            elif self.operator_type == '-':
-                stack.append(Number(self.grid, operand1.numerator - operand0.numerator))
-            elif self.operator_type == '*':
-                stack.append(Number(self.grid, operand1.numerator * operand0.numerator))
-            elif self.operator_type == '/':
-                stack.append(Number(self.grid, float(operand1.numerator) / operand0.numerator))
+            if isinstance(stack[-2], Number) and isinstance(stack[-3], Number):
+                stack.pop()
+                operand0 = stack.pop()
+                operand1 = stack.pop()
+                if self.operator_type == '+':
+                    stack.append(Number(self.grid, operand1.numerator + operand0.numerator))
+                elif self.operator_type == '-':
+                    stack.append(Number(self.grid, operand1.numerator - operand0.numerator))
+                elif self.operator_type == '*':
+                    stack.append(Number(self.grid, operand1.numerator * operand0.numerator))
+                elif self.operator_type == '/':
+                    stack.append(Number(self.grid, float(operand1.numerator) / operand0.numerator))
 
 
 ######################################################################
@@ -645,9 +646,12 @@ class Map(object):
 
 class RpnView(game.View):
     CLEAR_COLOR = [0.28, 0.24, 0.55, 0.0]
+    ROBOT0_COLORS = [[0.6,0.2,0.2,1],[0.6,0.2,0.2,0.7],[0.6,0.2,0.2,0.0]]
+    ROBOT1_COLORS = [[0.6,0.6,0.2,1],[0.6,0.6,0.2,0.7],[0.6,0.6,0.2,0.0]]
+
     def init(self, model):
         self.model = model
-        self.robot = RobotSprite(model.robots[0], [0.6,0.2,0.2,1])
+        self.robot = RobotSprite(model.robots[0], self.ROBOT0_COLORS[0])
         self.map = Map(model.grid)
         self.center = [0,0]
         self.zoom = DampedValue(random.uniform(0.25, 8), 0.05)
@@ -728,15 +732,40 @@ class RpnView(game.View):
 
         glPopMatrix()
 
+
+        glDisable(GL_TEXTURE_2D)
+        glBegin(GL_QUAD_STRIP)
+        glColor4fv(self.ROBOT0_COLORS[0])
+        glVertex2f(-WIDTH * 0.5, -HEIGHT * 0.5)
+        glVertex2f(-WIDTH * 0.5, HEIGHT * 0.5)
+        glColor4fv(self.ROBOT0_COLORS[1])
+        glVertex2f(-WIDTH * 0.42, -HEIGHT * 0.5)
+        glVertex2f(-WIDTH * 0.42, HEIGHT * 0.5)
+        glColor4fv(self.ROBOT0_COLORS[2])
+        glVertex2f(-WIDTH * 0.41, -HEIGHT * 0.5)
+        glVertex2f(-WIDTH * 0.41, HEIGHT * 0.5)
+        glEnd()
+        glBegin(GL_QUAD_STRIP)
+        glColor4fv(self.ROBOT1_COLORS[0])
+        glVertex2f(WIDTH * 0.5, -HEIGHT * 0.5)
+        glVertex2f(WIDTH * 0.5, HEIGHT * 0.5)
+        glColor4fv(self.ROBOT1_COLORS[1])
+        glVertex2f(WIDTH * 0.42, -HEIGHT * 0.5)
+        glVertex2f(WIDTH * 0.42, HEIGHT * 0.5)
+        glColor4fv(self.ROBOT1_COLORS[2])
+        glVertex2f(WIDTH * 0.41, -HEIGHT * 0.5)
+        glVertex2f(WIDTH * 0.41, HEIGHT * 0.5)
+        glEnd()
+
+        glEnable(GL_TEXTURE_2D)
         glPushMatrix()
-        glTranslate(-WIDTH * 0.45, HEIGHT * 0.425, 0)
+        glTranslate(-WIDTH * 0.46, Map.TILE_SIZE * 5 * 2, 0)
         glScale(*([Map.TILE_SIZE]*3))
         for number in self.model.robots[0].stack:
             NumberSprite.draw(number)
             glTranslate(0, -2, 0)
         glPopMatrix()
-
-        glScale(*([2]*3))
+        #glScale(*([2]*3))
 
         self.fade_to_black.update()
         if self.fade_to_black() > 0.01:
