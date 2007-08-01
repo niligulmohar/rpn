@@ -1,4 +1,3 @@
-#! /usr/bin/env python
 # -*- coding: utf-8 -*-
 
 # Authors:
@@ -12,17 +11,6 @@ import game
 import os.path, math, random
 from OpenGL.GL import *
 from OpenGL.GLU import *
-
-######################################################################
-
-files = {}
-
-def index_directory(none, directory, filenames):
-    if directory.count(".svn") == 0:
-        for f in filenames:
-            files[f] = os.path.join(directory, f)
-
-os.path.walk('data', index_directory, None)
 
 ######################################################################
 
@@ -85,13 +73,13 @@ class Model(object):
   ###
 ### #########
 #           #
-# +         #
-#       S   #
-# ? ?       #
+#  ?     ?  #
 #           #
-# + ? - ? + #
 #           #
-# ? ? + ? ? #
+#     S     #
+#           #
+#           #
+#  ?     ?  #
 #           #
 ######### ###
         ###""")
@@ -106,13 +94,14 @@ class Model(object):
             for xd, c in enumerate(l):
                 x = x0+xd
                 y = y0+yd
-                self.grid.set(x, y, Cell(c == '#'))
+                self.grid.set(x, y, Cell(c in '#?'))
                 if c == 'S':
                     self.robots[0].move(x, y)
                 elif c in "0123456789":
                     self.grid.get(x, y).object = Number(self.grid, ord(c) - ord("0"))
                 elif c == '?':
-                    self.grid.get(x, y).object = Number(self.grid, random.randrange(100))
+                    #self.grid.get(x, y).object = Number(self.grid, random.randrange(100))
+                    self.grid.get(x, y).surprise_box = True
                 elif c == '!':
                     self.grid.get(x, y).object = Number(self.grid, random.randrange(1000))
                 elif c in "+-*/":
@@ -122,9 +111,12 @@ class Model(object):
 class Cell(object):
     def __init__(self, blocked = False):
         self.blocked = blocked
+        self.surprise_box = False
         self.object = None
     def has_action(self):
-        return not self.blocked
+        return not self.blocked or self.surprise_box
+    def empty(self):
+        return not self.blocked and not self.object
 
 class Grid(object):
     def __init__(self):
@@ -175,6 +167,7 @@ def clamp(min_val, x, max_val):
 
 class Robot(Entity):
     MAX_STACK_HEIGHT = 11
+    TARGET_MOVE_FRAMES = 3
     def __init__(self, grid):
         Entity.__init__(self, grid)
         self.target_x = 0
@@ -182,6 +175,10 @@ class Robot(Entity):
         self.target_dx = 0
         self.target_dy = 1
         self.stack = []
+        self.up_frames = 0
+        self.down_frames = 0
+        self.left_frames = 0
+        self.right_frames = 0
     def move(self, x, y):
         self.x = x
         self.y = y
@@ -190,19 +187,57 @@ class Robot(Entity):
     def act_on_inputs(self, up, down, left, right, action):
         if up() and not down():
             self.dy = -1
+            self.up_frames += 1
+            self.down_frames = 0
         elif down() and not up():
             self.dy = 1
+            self.down_frames += 1
+            self.up_frames = 0
         else:
             self.dy = 0
+            self.up_frames = self.down_frames = 0
         if left() and not right():
             self.dx = -1
+            self.left_frames += 1
+            self.right_frames = 0
         elif right() and not left():
             self.dx = 1
+            self.right_frames += 1
+            self.left_frames = 0
         else:
             self.dx = 0
-        if self.dx or self.dy:
-            self.target_dx = self.dx
-            self.target_dy = self.dy
+            self.left_frames = self.right_frames = 0
+        col = int(round(self.x))
+        # col_noncentered = abs(self.target_x - col) > 1
+        row = int(round(self.y))
+        # row_noncentered = abs(self.target_y - row) > 1
+        for counter, dx, dy in ((self.up_frames, 0, -1),
+                                (self.down_frames, 0, 1),
+                                (self.left_frames, -1, 0),
+                                (self.right_frames, 1, 0)):
+            if counter % self.TARGET_MOVE_FRAMES == 1:
+                self.target_x += dx
+                if self.target_x < col - 1:
+                    self.target_x = col - 1
+                    # if row_noncentered and not (self.up_frames or self.down_frames):
+                    #     self.target_y = row
+                if self.target_x > col + 1:
+                    self.target_x = col + 1
+                    # if row_noncentered and not (self.up_frames or self.down_frames):
+                    #     self.target_y = row
+                self.target_y += dy
+                if self.target_y < row - 1:
+                    self.target_y = row - 1
+                    # if col_noncentered and not (self.left_frames or self.right_frames):
+                    #     self.target_x = col
+                if self.target_y > row + 1:
+                    self.target_y = row + 1
+                    # if col_noncentered and not (self.left_frames or self.right_frames):
+                    #     self.target_x = col
+                
+        # if self.dx or self.dy:
+        #     self.target_dx = self.dx
+        #     self.target_dy = self.dy
         if self.dx and self.dy:
             self.dx *= self.SQRT2
             self.dy *= self.SQRT2
@@ -245,15 +280,28 @@ class Robot(Entity):
         else:
             check_x()
             check_y()
-        self.target_x = int(round(self.x) + self.target_dx)
-        self.target_y = int(round(self.y) + self.target_dy)
+        # col = int(round(self.x))
+        # row = int(round(self.y))
+        # self.target_x = clamp(col - 1, self.target_x, col + 1)
+        # self.target_y = clamp(row - 1, self.target_y, row + 1)
+        # self.target_x = int(round(self.x) + self.target_dx)
+        # self.target_y = int(round(self.y) + self.target_dy)
 
         if action.get_triggered():
             target = self.grid.get(self.target_x, self.target_y)
             if not target.has_action():
                 pass
+            elif target.surprise_box:
+                for dx, dy in ((-1,0),(1,0),(0,-1),(0,1)):
+                    near_target = self.grid.get(self.target_x + dx,
+                                                self.target_y + dy)
+                    if near_target.empty():
+                        if random.randrange(3) < 1:
+                            near_target.object = Operator(self.grid, random.choice('+++--**/'))
+                        else:
+                            near_target.object = Number(self.grid, random.randrange(0,10))
             elif target.object:
-                if not self.stack_full():
+                if not self.stack_full() and target.object.may_be_pushed_on(self.stack):
                     self.stack.append(target.object)
                     target.object.pushed_on(self.stack)
                     target.object = None
@@ -273,6 +321,8 @@ class Number(Entity):
         self.denominator = denominator
     def text_len(self):
         return len(str(self.numerator))
+    def may_be_pushed_on(self, stack):
+        return True
     def pushed_on(self, stack):
         pass
 
@@ -282,20 +332,29 @@ class Operator(Entity):
         self.operator_type = operator_type
     def text_len(self):
         return len(self.operator_type)
+    def may_be_pushed_on(self, stack):
+        if len(stack) >= 2:
+            if isinstance(stack[-1], Number) and isinstance(stack[-2], Number):
+                if self.operator_type == '/':
+                    return stack[-1].numerator != 0
+                else:
+                    return True
+        return False
     def pushed_on(self, stack):
-        if len(stack) >= 3:
-            if isinstance(stack[-2], Number) and isinstance(stack[-3], Number):
-                stack.pop()
-                operand0 = stack.pop()
-                operand1 = stack.pop()
-                if self.operator_type == '+':
-                    stack.append(Number(self.grid, operand1.numerator + operand0.numerator))
-                elif self.operator_type == '-':
-                    stack.append(Number(self.grid, operand1.numerator - operand0.numerator))
-                elif self.operator_type == '*':
-                    stack.append(Number(self.grid, operand1.numerator * operand0.numerator))
-                elif self.operator_type == '/':
-                    stack.append(Number(self.grid, float(operand1.numerator) / operand0.numerator))
+        stack.pop()
+        operand0 = stack.pop()
+        operand1 = stack.pop()
+        if self.operator_type == '+':
+            stack.append(Number(self.grid, operand1.numerator + operand0.numerator))
+        elif self.operator_type == '-':
+            stack.append(Number(self.grid, operand1.numerator - operand0.numerator))
+        elif self.operator_type == '*':
+            stack.append(Number(self.grid, operand1.numerator * operand0.numerator))
+        elif self.operator_type == '/':
+            result = float(operand1.numerator) / operand0.numerator
+            if divmod(result, 1)[1] == 0:
+                result = int(result)
+            stack.append(Number(self.grid, result))
 
 
 ######################################################################
@@ -519,7 +578,7 @@ class NumberSprite(object):
                     random.expovariate(17),
                     random.expovariate(13))
         else:
-            return [(0.3, 0.3, 0.3),
+            return [(0.2, 0.2, 0.2),
                     (0.5, 0.3, 0.0),
                     (0.8, 0.0, 0.0),
                     (1.0, 0.5, 0.0),
@@ -615,6 +674,7 @@ class Map(object):
                 glPushMatrix()
                 Map.transform_for(x, y)
                 glBegin(GL_QUADS)
+                # glColor3f(0.8, 0.8, 0.8)
                 # TODO: Se till att molnskuggeberäkningarna inte är fånigt långsamma
                 def luminance(x,y):
                     return (math.sin((x + frame*0.08)*0.4) * math.sin((y + frame*0.01)*0.4)) * 0.2 + 0.9
@@ -639,6 +699,38 @@ class Map(object):
                 #glVertex2f(self.TILE_SIZE * (x - 0.5), self.TILE_SIZE * (y + 0.5))
                 glVertex2f(-1, 1)
                 glEnd()
+                if c.surprise_box:
+                    t = Texture.text("?")
+                    t.bind()
+                    glBegin(GL_QUADS)
+                    TEXT_WIDTH = 0.35
+                    TEXT_HEIGHT = 0.9
+                    SHADOW_OFFSET = 0.1
+                    SHADOW_OFFSET_X = 0.05
+
+                    glColor4f(0,0,0,0.7)
+
+                    glTexCoord2f(0, 0)
+                    glVertex2f(-TEXT_WIDTH + SHADOW_OFFSET_X, -TEXT_HEIGHT + SHADOW_OFFSET)
+                    glTexCoord2f(t.text_width, 0)
+                    glVertex2f(TEXT_WIDTH + SHADOW_OFFSET_X, -TEXT_HEIGHT + SHADOW_OFFSET)
+                    glTexCoord2f(t.text_width, t.text_height)
+                    glVertex2f(TEXT_WIDTH + SHADOW_OFFSET_X, TEXT_HEIGHT + SHADOW_OFFSET)
+                    glTexCoord2f(0, t.text_height)
+                    glVertex2f(-TEXT_WIDTH + SHADOW_OFFSET_X, TEXT_HEIGHT + SHADOW_OFFSET)
+
+                    glColor4f(1,1,1,1)
+
+                    glTexCoord2f(0, 0)
+                    glVertex2f(-TEXT_WIDTH, -TEXT_HEIGHT)
+                    glTexCoord2f(t.text_width, 0)
+                    glVertex2f(TEXT_WIDTH, -TEXT_HEIGHT)
+                    glTexCoord2f(t.text_width, t.text_height)
+                    glVertex2f(TEXT_WIDTH, TEXT_HEIGHT)
+                    glTexCoord2f(0, t.text_height)
+                    glVertex2f(-TEXT_WIDTH, TEXT_HEIGHT)
+
+                    glEnd()
                 if c.object:
                     NumberSprite.draw(c.object)
                 glPopMatrix()
@@ -654,7 +746,8 @@ class RpnView(game.View):
         self.robot = RobotSprite(model.robots[0], self.ROBOT0_COLORS[0])
         self.map = Map(model.grid)
         self.center = [0,0]
-        self.zoom = DampedValue(random.uniform(0.25, 8), 0.05)
+        self.zoom = DampedValue(random.uniform(0.5, 8), 0.05)
+        # self.zoom = DampedValue(0.2, 0.05)
         self.zoom.set_target(2)
         self.center = [DampedValue(random.uniform(-15, 15), 0.05) for n in xrange(2)]
         self.center[0].set_target(0)
@@ -700,9 +793,13 @@ class RpnView(game.View):
         cell = self.model.grid.get(x, y)
         if cell.has_action():
             alpha = 0.75 + math.sin(self.model.frames * 0.1) * 0.25
-            if cell.object:
+            if cell.surprise_box:
+                glColor4f(0,1,0,alpha)
+            elif cell.object:
                 if self.model.robots[0].stack_full():
                     glColor4f(1,1,0,alpha)
+                elif not cell.object.may_be_pushed_on(self.model.robots[0].stack):
+                    glColor4f(1,0.5,0,alpha)
                 else:
                     glColor4f(0,1,0,alpha)
             else:
@@ -817,31 +914,41 @@ class RpnController(game.Controller):
 
 ######################################################################
 
-game.py.init()
+if __name__ != '__main__':
+    files = {}
 
-WIDTH, HEIGHT = (1024, 768)
-flags = game.py.DOUBLEBUF | game.py.OPENGL
-if max(game.py.display.list_modes()) <= (WIDTH, HEIGHT):
-    flags |= game.py.FULLSCREEN | game.py.HWSURFACE
-screen = game.py.display.set_mode((WIDTH, HEIGHT), flags)
-game.py.mouse.set_visible(False)
+    def index_directory(none, directory, filenames):
+        if directory.count(".svn") == 0:
+            for f in filenames:
+                files[f] = os.path.join(directory, f)
 
-BodyPart.class_init()
-Map.class_init()
-NumberSprite.class_init()
-Texture.class_init()
-game.Music.songs['catoblepas'] =  game.Music.Song(files["GibIt-BorderlineTerritoryoftheCatoblepas.ogg"], 666, 4, 0, 0)
+    os.path.walk('data', index_directory, None)
 
-model = Model()
-view = RpnView(screen, model)
-controller = RpnController(view, model)
-music = game.Music()
-music.play()
+    game.py.init()
 
-controller.event_loop()
+    WIDTH, HEIGHT = (1024, 768)
+    flags = game.py.DOUBLEBUF | game.py.OPENGL
+    if max(game.py.display.list_modes()) <= (WIDTH, HEIGHT):
+        flags |= game.py.FULLSCREEN | game.py.HWSURFACE
+    screen = game.py.display.set_mode((WIDTH, HEIGHT), flags)
+    game.py.mouse.set_visible(False)
 
-music.stop()
+    BodyPart.class_init()
+    Map.class_init()
+    NumberSprite.class_init()
+    Texture.class_init()
+    game.Music.songs['catoblepas'] =  game.Music.Song(files["GibIt-BorderlineTerritoryoftheCatoblepas.ogg"], 666, 4, 0, 0)
 
-game.py.quit()
+    model = Model()
+    view = RpnView(screen, model)
+    controller = RpnController(view, model)
+    music = game.Music()
+    music.play()
+
+    controller.event_loop()
+
+    music.stop()
+
+    game.py.quit()
 
 ######################################################################
